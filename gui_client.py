@@ -1,151 +1,371 @@
 # CMPT 371 A3 - Connect-Four GUI Client
+# pygame-ce frontend that connects to the game server over TCP
 
 import socket
 import json
 import threading
 import sys
+import os
+import math
 
+os.environ['PYGAME_HIDE_SUPPORT_PROMPT'] = "hide"
 import pygame
 
 HOST = '127.0.0.1'
 PORT = 5050
 
+# window/grid dimensions
 COLS, ROWS = 7, 6
-SQ = 90
-RADIUS = SQ // 2 - 8
-HUD_HEIGHT = 60
-WIN_W = COLS * SQ
-WIN_H = ROWS * SQ + HUD_HEIGHT
+SQ = 90          # cell size in pixels
+RADIUS = SQ // 2 - 6
+HUD_HEIGHT = 80  # header bar
+WIN_W = COLS * SQ   # 630
+WIN_H = ROWS * SQ + HUD_HEIGHT  # 620
 
-# basic colours
-BG_COLOR = (30, 30, 50)
-BOARD_COLOR = (20, 40, 100)
-EMPTY_COLOR = (10, 15, 40)
-RED_COLOR = (220, 50, 50)
-YLW_COLOR = (230, 190, 0)
-WHITE = (240, 240, 240)
-GREY = (140, 140, 160)
+# colours
+BG_TOP = (10, 12, 30)
+BG_BOT = (20, 25, 55)
+BOARD_COL = (18, 34, 90)
+BOARD_EDGE = (30, 55, 150)
+EMPTY_COL = (8, 14, 40)
+EMPTY_EDGE = (25, 45, 120)
+
+RED_BASE = (230, 55, 60)
+RED_GLOW = (255, 100, 100)
+YLW_BASE = (240, 195, 0)
+YLW_GLOW = (255, 230, 100)
+WHITE = (245, 245, 255)
+GREY = (130, 140, 170)
+GREEN_TEXT = (60, 210, 130)
+YELLOW_TEXT = (255, 215, 0)
+RED_TEXT = (255, 120, 120)
+BLUE_TEXT = (120, 140, 255)
+SHADOW = (0, 0, 0, 80)
 
 
-class GameClient:
+def lerp(a, b, t):
+    return a + (b - a) * t
+
+def lerp_color(c1, c2, t):
+    return tuple(int(lerp(c1[i], c2[i], t)) for i in range(3))
+
+def draw_gradient_rect(surface, top_color, bot_color, rect):
+    # fills a rect with a top-to-bottom color gradient
+    x, y, w, h = rect
+    for i in range(h):
+        t = i / max(h - 1, 1)
+        color = lerp_color(top_color, bot_color, t)
+        pygame.draw.line(surface, color, (x, y + i), (x + w - 1, y + i))
+
+def draw_glowing_circle(surface, color, glow_color, center, radius, glow_radius):
+    # draws a circle with a fading glow ring around it
+    glow_surf = pygame.Surface((glow_radius * 2, glow_radius * 2), pygame.SRCALPHA)
+    for r in range(glow_radius, radius, -1):
+        alpha = int(30 * (1 - (r - radius) / (glow_radius - radius)))
+        pygame.draw.circle(glow_surf, (*glow_color, alpha), (glow_radius, glow_radius), r)
+    surface.blit(glow_surf, (center[0] - glow_radius, center[1] - glow_radius))
+    pygame.draw.circle(surface, color, center, radius)
+    # small bright dot to make it look like a disc
+    highlight_pos = (center[0] - radius // 4, center[1] - radius // 4)
+    highlight_r = radius // 4
+    pygame.draw.circle(surface, lerp_color(color, (255, 255, 255), 0.55), highlight_pos, highlight_r)
+
+
+class DropAnimation:
+    # handles the piece falling into place each turn
+    def __init__(self, col, final_row, player):
+        self.col       = col
+        self.final_row = final_row
+        self.player    = player
+        self.y_frac    = 0.0          # 0 = top, final_row = destination
+        self.speed     = 0.18         # fraction per frame (eased)
+        self.done      = False
+
+    def update(self):
+        if self.done: return
+        remaining = self.final_row - self.y_frac
+        self.y_frac += max(remaining * 0.28, 0.4)
+        if self.y_frac >= self.final_row:
+            self.y_frac = self.final_row
+            self.done = True
+
+
+class PremiumClient:
     def __init__(self):
         pygame.init()
+        pygame.display.set_caption("Connect-4  ·  Multiplayer")
         self.screen = pygame.display.set_mode((WIN_W, WIN_H))
-        pygame.display.set_caption("Connect Four")
-        self.clock = pygame.time.Clock()
-        self.font = pygame.font.SysFont("Arial", 20)
-        self.font_big = pygame.font.SysFont("Arial", 28, bold=True)
+        self.clock  = pygame.time.Clock()
 
+        # fonts
+        self.font_title  = pygame.font.Font("fonts/Montserrat-SemiBold.ttf", 22)
+        self.font_status = pygame.font.Font("fonts/Montserrat-SemiBold.ttf", 18)
+        self.font_big    = pygame.font.Font("fonts/Montserrat-SemiBold.ttf", 32)
+
+        # game state - gets updated when server sends messages
         self.board = [[' '] * COLS for _ in range(ROWS)]
-        self.my_role = None
+        self.my_role = None   # 'X' or 'O'
         self.turn = None
-        self.status_msg = "Connecting..."
+        self.status_msg = "Connecting to server..."
+        self.is_error = False
         self.is_game_over = False
 
-        self._move_pending = False
+        # animation state
+        self.drop_anim = None    # active DropAnimation, or None when idle
+        self.hover_col = None    # column the mouse is over
+        self.win_pulse = 0.0     # used for the pulsing win effect
+        self._move_pending = False  # True while waiting for server to ack our move
 
+        # draw the background once and reuse it
+        self._bg = pygame.Surface((WIN_W, WIN_H))
+        draw_gradient_rect(self._bg, BG_TOP, BG_BOT, (0, 0, WIN_W, WIN_H))
+
+        # sounds
+        pygame.mixer.init()
+        self.drop_sound = pygame.mixer.Sound("sounds/drop.mp3")
+        self.win_sound = pygame.mixer.Sound("sounds/win.mp3")
+        self.lose_sound = pygame.mixer.Sound("sounds/lose.mp3")
+        self._endgame_sound_played = False
+
+        # Network
         self._connect()
 
+    # socket setup and message handling
+
     def _connect(self):
+        self.sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         try:
-            self.sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
             self.sock.connect((HOST, PORT))
-            self.sock.sendall((json.dumps({"type": "CONNECT"}) + '\n').encode('utf-8'))
-            t = threading.Thread(target=self._listen, daemon=True)
-            t.start()
+            self.sock.sendall((json.dumps({"type": "CONNECT"}) + '\n').encode())
+            self.status_msg = "Connected — waiting for opponent…"
+            threading.Thread(target=self._listen, daemon=True).start()
         except Exception as e:
-            self.status_msg = f"Connection failed: {e}"
+            self.status_msg = f"Cannot connect: {e}"
+            self.is_error   = True
 
     def _listen(self):
+        # runs in a background thread, reads incoming messages from server
+        buf = ""
         try:
             while True:
-                data = self.sock.recv(2048).decode('utf-8')
-                if not data:
+                chunk = self.sock.recv(2048).decode()
+                if not chunk:
+                    # only show disconnect if it wasn't a clean game end
+                    if not self.is_game_over:
+                        self.status_msg = "Server disconnected."
                     break
-                # just split on newlines and handle each message
-                # might miss messages if they arrive together but works for now
-                for line in data.strip().split('\n'):
-                    if line:
+                buf += chunk
+                while '\n' in buf:
+                    line, buf = buf.split('\n', 1)
+                    if line.strip():
                         self._handle(json.loads(line))
         except Exception as e:
-            self.status_msg = f"Disconnected: {e}"
+            if not self.is_game_over:
+                self.status_msg = f"Network error: {e}"
 
     def _handle(self, msg):
+        # called when we get a message from the server
         if msg["type"] == "WELCOME":
-            self.my_role = msg["payload"]
-            self.status_msg = f"You are {self.my_role}. Waiting for opponent..."
+            self.my_role    = msg["payload"][-1]   # 'X' or 'O'
+            colour_name     = "Red" if self.my_role == 'X' else "Yellow"
+            self.status_msg = f"You are Player {colour_name}"
 
         elif msg["type"] == "UPDATE":
-            self.board = msg["board"]
-            self.turn = msg["turn"]
-            self.status_msg = msg["status"]
-            self._move_pending = False
+            new_board = msg["board"]
 
-            if msg["status"] != "ongoing":
+            # find which cell changed to trigger the drop animation
+            for r in range(ROWS):
+                for c in range(COLS):
+                    if new_board[r][c] != self.board[r][c] and new_board[r][c] != ' ':
+                        self.drop_anim = DropAnimation(c, r, new_board[r][c])
+                    
+                    if new_board[r][c] == self.my_role:
+                        self.drop_sound.play()
+
+            self.board         = new_board
+            self.turn          = msg["turn"]
+            status_raw         = msg["status"]
+            self.is_error      = False
+            self._move_pending = False   # good to go for next move
+
+            if status_raw != "ongoing":
                 self.is_game_over = True
+                self.status_msg   = status_raw
+                self.is_error     = False
+
+                # play win/lose sound
+                if not self._endgame_sound_played:
+                    if "won" in self.status_msg: 
+                        self.win_sound.play()
+                    elif "lost" in self.status_msg:
+                        self.lose_sound.play()
+                    self._endgame_sound_played = True
+            elif self.turn == self.my_role:
+                self.status_msg = "Your turn — click a column!"
+                self.is_error   = False
+            else:
+                self.status_msg = "Opponent's turn…"
+                self.is_error   = False
 
     def _send_move(self, col):
-        if self._move_pending or self.is_game_over:
+        # ignore clicks if it's not our turn, game is over, or still animating
+        anim_in_progress = self.drop_anim is not None and not self.drop_anim.done
+        if self.turn != self.my_role or self.is_game_over or anim_in_progress or self._move_pending:
             return
-        my_token = 'X' if self.my_role == "Player X" else 'O'
-        if self.turn != my_token:
-            return
-        self._move_pending = True
-        self.sock.sendall((json.dumps({"type": "MOVE", "col": col}) + '\n').encode('utf-8'))
+        try:
+            msg = json.dumps({"type": "MOVE", "col": col}) + '\n'
+            self.sock.sendall(msg.encode())
+            self._move_pending = True   # wait for server to confirm before allowing next click
+            self.status_msg = "Move sent…"
+        except Exception as e:
+            self.status_msg = f"Send error: {e}"
 
-    def _draw(self):
-        self.screen.fill(BG_COLOR)
+    # rendering helpers
 
-        # draw hud
-        hud_surf = pygame.Surface((WIN_W, HUD_HEIGHT))
-        hud_surf.fill((15, 20, 45))
-        self.screen.blit(hud_surf, (0, 0))
+    def _disc_color(self, player):
+        return (RED_BASE, RED_GLOW) if player == 'X' else (YLW_BASE, YLW_GLOW)
 
-        # status text
-        color = WHITE
-        if self.is_game_over:
-            color = (100, 220, 100)
-        status_surf = self.font.render(self.status_msg, True, color)
-        self.screen.blit(status_surf, (10, HUD_HEIGHT // 2 - status_surf.get_height() // 2))
+    def _col_center_x(self, c):
+        return c * SQ + SQ // 2
+
+    def _row_center_y(self, r):
+        return HUD_HEIGHT + r * SQ + SQ // 2
+
+    def _draw_hud(self):
+        # top bar showing player color and current status
+        pygame.draw.rect(self.screen, (12, 16, 45), (0, 0, WIN_W, HUD_HEIGHT))
+        pygame.draw.line(self.screen, BOARD_EDGE, (0, HUD_HEIGHT - 1), (WIN_W, HUD_HEIGHT - 1), 2)
+
+        # player color badge on the left
+        if self.my_role:
+            c, g = self._disc_color(self.my_role)
+            colour_name = "Red" if self.my_role == 'X' else "Yellow"
+            pygame.draw.circle(self.screen, c, (32, HUD_HEIGHT // 2), 16)
+            r_text = self.font_status.render(f"Player {colour_name}", True, WHITE)
+            self.screen.blit(r_text, (56, HUD_HEIGHT // 2 - r_text.get_height() // 2))
+
+        # status message in the middle
+        if not self.is_game_over:
+            if self.is_error:
+                col = RED_TEXT
+            else:
+                col = BLUE_TEXT
+            surf = self.font_status.render(self.status_msg, True, col)
+            self.screen.blit(surf, surf.get_rect(center=(WIN_W // 2, HUD_HEIGHT // 2)))
+
+    def _draw_board(self):
+        # draws the board grid and all placed pieces
+        board_rect = pygame.Rect(0, HUD_HEIGHT, WIN_W, ROWS * SQ)
 
         # draw board background
-        board_rect = pygame.Rect(0, HUD_HEIGHT, WIN_W, ROWS * SQ)
-        pygame.draw.rect(self.screen, BOARD_COLOR, board_rect)
+        pygame.draw.rect(self.screen, BOARD_COL, board_rect, border_radius=12)
+        pygame.draw.rect(self.screen, BOARD_EDGE, board_rect, 3, border_radius=12)
 
-        # draw cells
-        for row in range(ROWS):
-            for col in range(COLS):
-                cx = col * SQ + SQ // 2
-                cy = HUD_HEIGHT + row * SQ + SQ // 2
-                cell = self.board[row][col]
+        pulse = (math.sin(self.win_pulse) + 1) / 2   # 0-1
 
-                if cell == 'X':
-                    color = RED_COLOR
-                elif cell == 'O':
-                    color = YLW_COLOR
+        for r in range(ROWS):
+            for c in range(COLS):
+                cx = self._col_center_x(c)
+                cy = self._row_center_y(r)
+                val = self.board[r][c]
+
+                # if this cell is mid-animation, skip it here and draw it separately
+                if (self.drop_anim and not self.drop_anim.done
+                        and c == self.drop_anim.col and r == self.drop_anim.final_row):
+                    val = ' '
+
+                if val == ' ':
+                    # show a faint preview in whatever column the mouse is over
+                    if self.hover_col == c and self.turn == self.my_role and not self.is_game_over:
+                        base, glow = self._disc_color(self.my_role)
+                        preview = lerp_color(EMPTY_COL, base, 0.18)
+                        pygame.draw.circle(self.screen, preview, (cx, cy), RADIUS)
+                        pygame.draw.circle(self.screen, EMPTY_EDGE, (cx, cy), RADIUS, 2)
+                    else:
+                        pygame.draw.circle(self.screen, EMPTY_COL, (cx, cy), RADIUS)
+                        pygame.draw.circle(self.screen, EMPTY_EDGE, (cx, cy), RADIUS, 2)
                 else:
-                    color = EMPTY_COLOR
+                    base, glow_c = self._disc_color(val)
+                    r_draw = RADIUS
+                    if self.is_game_over:  # pulse pieces when game ends
+                        r_draw = RADIUS + int(pulse * 4)
+                        base = lerp_color(base, glow_c, pulse * 0.5)
+                    draw_glowing_circle(self.screen, base, glow_c, (cx, cy), r_draw, r_draw + 8)
 
-                pygame.draw.circle(self.screen, color, (cx, cy), RADIUS)
+    def _draw_drop_animation(self):
+        # draw the piece mid-fall if there's an active animation
+        anim = self.drop_anim
+        if anim is None or anim.done:
+            return
+        c  = anim.col
+        cx = self._col_center_x(c)
+        # y moves from top of board down to the target row
+        cy = self._row_center_y(anim.y_frac)
+        base, glow = self._disc_color(anim.player)
+        draw_glowing_circle(self.screen, base, glow, (int(cx), int(cy)), RADIUS, RADIUS + 8)
 
-        pygame.display.flip()
+    def _draw_game_over_overlay(self):
+        overlay = pygame.Surface((WIN_W, WIN_H), pygame.SRCALPHA)
+        overlay.fill((0, 0, 0, 180))
+        self.screen.blit(overlay, (0, 0))
+
+        # pick text color based on outcome
+        if "won" in self.status_msg:
+            text = self.font_big.render(self.status_msg, True, GREEN_TEXT)
+        elif "lost" in self.status_msg:
+            text = self.font_big.render(self.status_msg, True, RED_TEXT)
+        else:
+            text = self.font_big.render("Game Over", True, BLUE_TEXT)
+
+        self.screen.blit(text, text.get_rect(center=(WIN_W // 2, WIN_H // 2)))
+
+        # tell the player what to do next
+        sub = self.font_status.render("Close window to exit", True, (200, 200, 200))
+        self.screen.blit(sub, sub.get_rect(center=(WIN_W // 2, WIN_H // 2 + 40)))
+
+    # game loop
 
     def run(self):
         while True:
+            dt = self.clock.tick(60)
+
+            # events
             for event in pygame.event.get():
                 if event.type == pygame.QUIT:
+                    try: self.sock.close()
+                    except: pass
                     pygame.quit()
                     sys.exit()
 
-                if event.type == pygame.MOUSEBUTTONDOWN and not self.is_game_over:
-                    mx, my = event.pos
-                    if my > HUD_HEIGHT:
-                        col = mx // SQ
-                        self._send_move(col)
+                if event.type == pygame.MOUSEMOTION:
+                    mx = event.pos[0]
+                    self.hover_col = mx // SQ if mx < WIN_W else None
 
-            self._draw()
-            self.clock.tick(30)
+                if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
+                    if event.pos[1] > HUD_HEIGHT:   # Click is on the board
+                        col = event.pos[0] // SQ
+                        if 0 <= col < COLS:
+                            self._send_move(col)
+
+            # update
+            if self.drop_anim and not self.drop_anim.done:
+                self.drop_anim.update()
+            # animation finished, clear it
+            if self.drop_anim and self.drop_anim.done:
+                self.drop_anim = None
+
+            if self.is_game_over:
+                self.win_pulse += 0.06
+
+            # render
+            self.screen.blit(self._bg, (0, 0))
+            self._draw_hud()
+            self._draw_board()
+            self._draw_drop_animation()
+            if self.is_game_over:
+                self._draw_game_over_overlay()
+            pygame.display.flip()
 
 
 if __name__ == "__main__":
-    GameClient().run()
+    PremiumClient().run()
