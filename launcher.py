@@ -91,6 +91,8 @@ def stop():
         try: p.terminate()
         except: pass
     processes.clear()
+    subprocess.Popen(['pkill', '-f', 'server.py'],
+                     stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     launched = False
     status_msg = "Stopped all processes."
     status_is_error = False
