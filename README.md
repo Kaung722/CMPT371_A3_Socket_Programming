@@ -9,7 +9,7 @@ A real-time, two-player **Connect-Four** game built entirely on Python's **TCP S
 
 | Name | Student ID | Email |
 |------|-----------|-------|
-| Ha Thuy Anh (Kelly) Khuc | 301416841 | [INSERT_EMAIL] |
+| Ha Thuy Anh (Kelly) Khuc | 301416841 | htk@sfu.ca |
 | Kaung Si Thu | 301554181 | kaungsit@sfu.ca |
 
 ---
