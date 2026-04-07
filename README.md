@@ -117,8 +117,8 @@ All dependencies are listed in `requirements.txt`.
 ### Step 1 — Clone the repository
 
 ```bash
-git clone https://github.com/kelly2603/CMPT371_A3_Socket_App.git
-cd CMPT371_A3_Socket_App
+git clone https://github.com/Kaung722/CMPT371_A3_Socket_Programming.git
+cd CMPT371_A3_Socket_Programming
 ```
 
 ---
@@ -211,14 +211,7 @@ python --version
 If Python is not installed or is older than 3.9, download it from [python.org](https://www.python.org/downloads/).  
 ✅ During installation, check **"Add Python to PATH"**.
 
-#### Step 3 — (Optional but recommended) Create a virtual environment
-
-```cmd
-python -m venv venv
-venv\Scripts\activate
-```
-
-#### Step 4 — Install dependencies
+#### Step 3 — Install dependencies
 
 ```cmd
 pip install -r requirements.txt
@@ -230,9 +223,9 @@ Verify:
 python -c "import pygame; print(pygame.version.ver)"
 ```
 
-#### Step 5 — Manual launch (three separate terminals)
+#### Step 4 — Manual launch (three separate terminals)
 
-Open **three separate Command Prompt / PowerShell windows**, navigate into the project folder in each, activate the virtual environment (`venv\Scripts\activate`), and run:
+Open **three separate Command Prompt / PowerShell windows**, navigate into the project folder in each, and run:
 
 ```cmd
 :: Window 1 — start the server first
