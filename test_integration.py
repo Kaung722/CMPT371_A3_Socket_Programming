@@ -385,5 +385,123 @@ class TestServerIntegration(unittest.TestCase):
             cx.close(); co.close()
 
 
+    # ── 7. Bug reproduction tests ─────────────────────────────────────────────
+    # These tests are designed to EXPOSE the known bugs.
+    # They are expected to FAIL before the bugs are fixed.
+
+    def test_19_draw_game_does_not_crash_server(self):
+        """
+        BUG: UnboundLocalError — 'stat' is not assigned when winner == 'Draw'.
+        Plays a complete 42-move game that ends in a draw and verifies the
+        server sends 'Draw' status to both clients without crashing.
+
+        Draw board pattern (X moves first, O moves second, columns 0-6):
+        Round-robin across columns so no player gets 4 in a row.
+        Column order each round: 0,1,2,3,4,5,6 -> fill bottom-up, alternating.
+        We use a known non-winning fill: odd columns for X, even for O in each row.
+        """
+        cx, co, wx, wo, ux, uo = make_session()
+        try:
+            # This sequence fills the board in a zigzag pattern that produces
+            # a draw (no 4-in-a-row for either player).
+            # 6 rows × 7 cols = 42 moves total. X moves 21 times, O 21 times.
+            # Column fill order chosen to avoid any win mid-game.
+            # Verified draw sequence — all 42 moves, no 4-in-a-row for either player.
+            # Found by simulating random column choices and keeping runs that end in 'Draw'.
+            draw_cols = [
+                5, 3, 4, 0, 3, 2, 4, 3, 1, 6,
+                0, 5, 2, 3, 4, 4, 2, 1, 1, 6,
+                6, 3, 6, 4, 2, 0, 6, 2, 2, 1,
+                4, 6, 5, 0, 0, 0, 3, 5, 5, 5,
+                1, 1,
+            ]
+            clients = [cx, co]
+            turn_idx = 0
+            last_ux = last_uo = None
+            for col in draw_cols:
+                client = clients[turn_idx % 2]
+                client.move(col)
+                last_ux = cx.recv_msg()
+                last_uo = co.recv_msg()
+                # If the game is over early (someone won), stop.
+                if last_ux['status'] != 'ongoing':
+                    break
+                turn_idx += 1
+
+            # The final status for both clients must contain 'Draw'.
+            self.assertIn('Draw', last_ux['status'],
+                          "Server crashed or sent wrong status on draw for X")
+            self.assertIn('Draw', last_uo['status'],
+                          "Server crashed or sent wrong status on draw for O")
+        finally:
+            cx.close(); co.close()
+
+    def test_20_full_column_server_does_not_hang(self):
+        """
+        BUG: ConnectionResetError — When a full-column move is ignored by the
+        server, _move_pending stays True on the client forever. The server then
+        waits for the next recv from the same player but the client has given up
+        and closed the connection, causing WinError 10054.
+
+        This test fills a column, sends a bad move into it, then immediately
+        sends a valid move. Both must produce a clean UPDATE with no crash.
+        """
+        cx, co, wx, wo, ux, uo = make_session()
+        try:
+            # Fill column 0 completely (6 pieces: X O X O X O)
+            for _ in range(3):
+                cx.move(0); cx.recv_msg(); co.recv_msg()  # X at col 0
+                co.move(0); cx.recv_msg(); co.recv_msg()  # O at col 0
+            # Col 0 is full. It's X's turn.
+
+            # Send bad move into full column 0.
+            cx.move(0)
+            time.sleep(0.15)   # let server process the rejected move
+
+            # Immediately send a valid move into col 1.
+            # If the server is stuck waiting on the wrong client or crashed,
+            # this recv_msg() call will time out and raise a socket.timeout.
+            cx.move(1)
+            update_x = cx.recv_msg()
+            update_o = co.recv_msg()
+
+            self.assertEqual(update_x['board'][5][1], 'X',
+                             "Valid move after full-column rejection was not registered")
+            self.assertEqual(update_x['status'], 'ongoing')
+        finally:
+            cx.close(); co.close()
+
+    def test_21_abrupt_disconnect_does_not_crash_server(self):
+        """
+        BUG: ConnectionResetError — When a client forcefully closes its socket
+        mid-game, the server's recv() raises ConnectionResetError/BrokenPipeError
+        and the stack trace floods the console. The server thread should catch
+        this and exit cleanly so the server process stays alive.
+
+        After the disconnect, the server process must still accept new connections.
+        """
+        cx, co, wx, wo, ux, uo = make_session()
+
+        # Make one move, then abruptly close both client sockets.
+        cx.move(0); cx.recv_msg(); co.recv_msg()
+        cx.close()   # disconnect mid-game — server will get ConnectionResetError on next recv
+        co.close()
+
+        # Give the server thread a moment to clean up.
+        time.sleep(0.5)
+
+        # The server must still be alive and accepting new games.
+        try:
+            cx2, co2, wx2, wo2, ux2, uo2 = make_session()
+            self.assertEqual(wx2['type'], 'WELCOME',
+                             "Server did not recover after abrupt client disconnect")
+        finally:
+            try: cx2.close()
+            except: pass
+            try: co2.close()
+            except: pass
+
+
 if __name__ == '__main__':
     unittest.main(verbosity=2)
+

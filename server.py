@@ -175,9 +175,11 @@ def run_game(sock_red, addr_red, sock_yel, addr_yel):
             status_o = "ongoing"
 
             if winner:
+                stat = winner 
                 if winner == 'Draw':
                     status_x = "It's a Draw!"
                     status_o = "It's a Draw!"
+                    stat = "Draw"
                 else:
                     if winner == 'X':
                         status_x = "Congratulations, you won!"
@@ -204,17 +206,6 @@ def run_game(sock_red, addr_red, sock_yel, addr_yel):
             else:
                 print(f"[{ts()}] sent UPDATE, turn={turn}", flush=True)
 
-            # After a move, the player who just moved may have buffered extra data
-            # in their send buffer. Drain it in non-blocking mode so it doesn't
-            # interfere with the next expected MOVE from the other player.
-            just_moved = conns['O' if turn == 'X' else 'X']
-            just_moved.setblocking(False)
-            try:
-                while just_moved.recv(4096):
-                    pass
-            except:
-                pass
-            just_moved.setblocking(True)
 
             if winner:
                 break  # Game is over; exit the loop and close sockets below.
