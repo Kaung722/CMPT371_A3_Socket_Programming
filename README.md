@@ -1,16 +1,16 @@
 # Connect-Four — Multiplayer Socket Application
 > CMPT 371 – Assignment 3 | Simon Fraser University
 
-A real-time, two-player **Connect-Four** game built entirely on Python's **TCP Socket API**. One player runs the server; both players connect with a Pygame GUI client. All game logic lives on the server so neither client can cheat.
+A real-time, two-player **Connect-Four** game built entirely on Python's **TCP Socket API**. The application creates 1 server and 2 GUI clients. All game logic lives on the server so neither client can cheat.
 
 ---
 
 ## Team Members
 
-| Name | Student ID |
-|------|-----------|
-| Ha Thuy Anh (Kelly) Khuc | 301416841 |
-| Kaung Si Thu | 301554181 |
+| Name | Student ID | Email |
+|------|-----------|-------|
+| Ha Thuy Anh (Kelly) Khuc | 301416841 | [INSERT_EMAIL] |
+| Kaung Si Thu | 301554181 | kaungsit@sfu.ca |
 
 ---
 
@@ -60,41 +60,19 @@ A real-time, two-player **Connect-Four** game built entirely on Python's **TCP S
 
 ---
 
-## Testing
-
-Install `pytest` first (included automatically if you follow the run guide):
-
-```bash
-python -m pip install pytest
-```
-
-**Unit tests** — validates all `check_winner` logic without a running server:
-
-```bash
-python -m pytest test_server.py -v
-```
-
-**Integration tests** — spins up a real server and simulates two TCP clients end-to-end:
-
-```bash
-python -m pytest test_integration.py -v
-```
-
-Both suites also run automatically on every push and pull request to `main` via **GitHub Actions** (see `.github/workflows/tests.yml`).
-
----
-
 ## Limitations
 
 | # | Limitation | Notes |
 |---|-----------|-------|
-| 1 | **Two players only** | The server matches exactly two clients per session. A third client connecting during a live game will not be paired until the current session ends. |
-| 2 | **Localhost / same machine only** | `HOST` is hardcoded to `127.0.0.1` in both `server.py` and `gui_client.py`. To play over a LAN, both files must be edited to use the server machine's LAN IP address. Playing over the public internet is not supported without additional network configuration (e.g. port forwarding). |
-| 3 | **No reconnection** | If either client disconnects mid-game (network drop, window closed), the session ends immediately. The remaining client must close and restart. |
-| 4 | **No game persistence** | Game state exists only in memory. If the server process crashes, all session data is lost and all clients must reconnect. |
-| 5 | **Port conflict on rapid re-launch** | The server uses `SO_REUSEADDR` to mitigate port reuse issues. However, if the port (`5050`) is still occupied after a crash, wait ~10 seconds before restarting the server. |
-| 6 | **Launcher is macOS-only (recommended path)** | `launcher.py` opens a macOS Terminal window for the server using AppleScript (`osascript`). On Windows, the launcher runs the server silently in the background (no visible server log). The manual three-terminal method is the recommended path on Windows. |
-| 7 | **Single active game session** | The server supports one active game at a time per pair of connected clients. Concurrent independent game sessions are not supported. |
+| 1 | **Two players per game** | The server matches exactly two clients per session. A third client connecting during a live game will not be paired until another client joins to form a new pair. |
+| 2 | **Handling multiple clients concurrently** | The server utilizes `threading.Thread` to support multiple independent game pairs concurrently. However, scaling to thousands of games may be limited by the server's memory and OS thread limits. |
+| 3 | **Client disconnecting** | If either client disconnects mid-game (network drop, window closed), the session ends immediately without state recovery. The remaining client must close and restart. |
+| 4 | **Ensuring data integrity** | Data is transferred over reliable TCP sockets and JSON strings, ensuring complete in-order delivery. However, there is no TLS/SSL encryption or cryptographic hashing to prevent packet tampering on untrusted networks. |
+| 5 | **High latency issues** | Actions are validated synchronously by the server. Under high network latency, players may experience a delay between clicking a column and seeing their move reflected, as the GUI awaits the server's `UPDATE`. |
+| 6 | **No game persistence** | Game state exists only in memory. If the server process crashes, all active session data is lost. |
+| 7 | **Port conflict on rapid re-launch** | The server uses `SO_REUSEADDR` to mitigate port reuse issues. If the port (`5050`) remains occupied after a crash, wait ~10 seconds before restarting. |
+| 8 | **Local host limitation** | `HOST` is hardcoded to `127.0.0.1` in both files. To play over a LAN, both files must be edited to use the server machine's LAN IP. |
+| 9 | **Launcher is macOS-only** | `launcher.py` opens a macOS Terminal window via AppleScript. On Windows, it runs silently in the background, so the manual three-terminal method is recommended on Windows. |
 
 ---
 
@@ -258,6 +236,30 @@ python gui_client.py
 3. First player to get **four discs in a row** (horizontal, vertical, or diagonal) wins.
 4. If the board fills up completely with no winner, the game ends in a **Draw**.
 5. A game-over overlay appears on both clients at the end of the game. Close the window to exit.
+
+---
+
+## Testing
+
+Install `pytest` first (included automatically if you follow the run guide):
+
+```bash
+python -m pip install pytest
+```
+
+**Unit tests** — validates all `check_winner` logic without a running server:
+
+```bash
+python -m pytest test_server.py -v
+```
+
+**Integration tests** — spins up a real server and simulates two TCP clients end-to-end:
+
+```bash
+python -m pytest test_integration.py -v
+```
+
+Both suites also run automatically on every push and pull request to `main` via **GitHub Actions** (see `.github/workflows/tests.yml`).
 
 ---
 
