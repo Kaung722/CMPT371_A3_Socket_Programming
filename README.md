@@ -42,6 +42,7 @@ A real-time, two-player **Connect-Four** game built entirely on Python's **TCP S
 | Client → Server | `MOVE` | `{ "col": <int> }` |
 | Server → Client | `WELCOME` | `{ "payload": "Player X\|O" }` |
 | Server → Client | `UPDATE` | `{ "board": [[...]], "turn": "X\|O", "status": "ongoing\|Congratulations, you won!\|You lost!\|It's a Draw!" }` — status is personalized per client |
+| Server → Client | `ERROR` | `{ "message": "<reason>" }` — sent when a move is rejected (e.g. column full); client clears its move lock and shows the message |
 
 ---
 
@@ -232,7 +233,7 @@ python gui_client.py
 ## How to Play
 
 1. Two clients connect to the server and are assigned **Player Red** (moves first, `X`) or **Player Yellow** (`O`).
-2. Click any **column** on the board to drop your disc. Clicks on columns that are full are silently ignored.
+2. Click any **column** on the board to drop your disc. If the chosen column is full, the server will reject the move and display an error message — simply click a different column.
 3. First player to get **four discs in a row** (horizontal, vertical, or diagonal) wins.
 4. If the board fills up completely with no winner, the game ends in a **Draw**.
 5. A game-over overlay appears on both clients at the end of the game. Close the window to exit.
