@@ -275,3 +275,14 @@ Both suites also run automatically on every push and pull request to `main` via 
 | **Gameplay logic inspiration** | Adapted from the Tic-Tac-Toe socket reference implementation by [@mariam-bebawy](https://github.com/mariam-bebawy/CMPT371_A3_Socket_Programming) |
 | **Everything else** | Written by Ha Thuy Anh (Kelly) Khuc and Kaung Si Thu — including TCP socket setup and connection handling, the newline-delimited JSON protocol design, server-side matchmaking lobby, authoritative board state management, gravity-based piece placement, four-direction win detection (`check_winner`), per-client personalised status messages, turn enforcement, threaded game sessions, and the client-side networking layer (socket connect, background listener thread, message buffering and parsing) |
 
+---
+
+## References
+
+- 📺 **[CMPT 371 — Assignment 3 Socket Programming in Python](https://www.youtube.com/playlist?list=PL-8C2cUhmkO1yWLTCiqf4mFXId73phvdx)** — TA-guided tutorial playlist for this assignment.
+- 📺 **[Python Network Programming — TCP/IP Socket Programming](https://www.youtube.com/playlist?list=PLhTjy8cBISErYuLZUvVOYsR1giva2payF)** — YouTube tutorial series covering Python TCP socket fundamentals.
+- 📄 **[Python `socket` module documentation](https://docs.python.org/3/library/socket.html)** — Official Python docs for the Socket API used throughout this project.
+- 📄 **[Python `threading` module documentation](https://docs.python.org/3/library/threading.html)** — Used for per-game session threads on the server.
+- 📄 **[Pygame CE documentation](https://pyga.me/docs/)** — API reference for the GUI client's rendering, animation, and sound.
+- 📄 **[Python `json` module documentation](https://docs.python.org/3/library/json.html)** — Used for newline-delimited JSON protocol serialization/deserialization.
+
