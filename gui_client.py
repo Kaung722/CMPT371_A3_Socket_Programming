@@ -205,8 +205,6 @@ class PremiumClient:
                 for c in range(COLS):
                     if new_board[r][c] != self.board[r][c] and new_board[r][c] != ' ':
                         self.drop_anim = DropAnimation(c, r, new_board[r][c])
-                    
-                    if new_board[r][c] == self.my_role:
                         self.drop_sound.play()
 
             self.board         = new_board
