@@ -160,8 +160,13 @@ def run_game(sock_red, addr_red, sock_yel, addr_yel):
                     break
 
             if r is None:
-                # The column is full — silently ignore the move and wait for another.
-                print(f"[{ts()}] Column {c} is full, ignoring move from Player {turn} rejected", flush=True)
+                # The column is full — send an ERROR back to the client so it
+                # can unlock _move_pending and let the player choose another column.
+                # Silently dropping the move (with continue) would leave _move_pending=True
+                # on the client forever, causing a deadlock (WinError 10054 on Windows).
+                print(f"[{ts()}] Column {c} is full, rejecting move from Player {turn}", flush=True)
+                error_msg = json.dumps({"type": "ERROR", "message": f"Column {c} is full! Choose another."}) + '\n'
+                cur_sock.sendall(error_msg.encode('utf-8'))
                 continue
 
             print(f"[{ts()}] MOVE from Player {turn} ({addr_map[turn]}): col={c}", flush=True)

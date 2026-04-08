@@ -243,8 +243,8 @@ class TestServerIntegration(unittest.TestCase):
 
     def test_11_full_column_move_is_rejected(self):
         """
-        A move into a full column must be silently ignored. The next valid move
-        from the same player should succeed and produce an UPDATE.
+        A move into a full column must be rejected with an ERROR message.
+        The next valid move from the same player should succeed and produce an UPDATE.
         """
         cx, co, wx, wo, ux, uo = make_session()
         try:
@@ -254,14 +254,15 @@ class TestServerIntegration(unittest.TestCase):
                 co.move(0); cx.recv_msg(); co.recv_msg()
 
             # Column 0 is now completely full; it's X's turn.
-            # Server reads both packets as a stream, so we add a small sleep
-            # between the bad move and the valid move so TCP delivers them
-            # as separate recv() calls on the server side.
-            cx.move(0)   # rejected — server ignores
-            time.sleep(0.15)
-            cx.move(1)   # valid move — should produce UPDATE
+            cx.move(0)           # bad move → server sends ERROR
+            error = cx.recv_msg()
+            self.assertEqual(error['type'], 'ERROR',
+                             "Server must reply with ERROR for a full-column move")
+
+            cx.move(1)           # valid move → server sends UPDATE
             update = cx.recv_msg(); co.recv_msg()
 
+            self.assertEqual(update['type'], 'UPDATE')
             self.assertEqual(update['board'][5][1], 'X')
             self.assertEqual(update['status'], 'ongoing')
         finally:
@@ -438,13 +439,10 @@ class TestServerIntegration(unittest.TestCase):
 
     def test_20_full_column_server_does_not_hang(self):
         """
-        BUG: ConnectionResetError — When a full-column move is ignored by the
-        server, _move_pending stays True on the client forever. The server then
-        waits for the next recv from the same player but the client has given up
-        and closed the connection, causing WinError 10054.
-
-        This test fills a column, sends a bad move into it, then immediately
-        sends a valid move. Both must produce a clean UPDATE with no crash.
+        When a full-column move is sent, the server must:
+        1. Reply immediately with an ERROR (not hang waiting for recv).
+        2. Keep the game going — the next valid move must produce an UPDATE.
+        This test was added to catch WinError 10054 on Windows.
         """
         cx, co, wx, wo, ux, uo = make_session()
         try:
@@ -454,13 +452,12 @@ class TestServerIntegration(unittest.TestCase):
                 co.move(0); cx.recv_msg(); co.recv_msg()  # O at col 0
             # Col 0 is full. It's X's turn.
 
-            # Send bad move into full column 0.
+            # Send bad move — server must reply with ERROR immediately.
             cx.move(0)
-            time.sleep(0.15)   # let server process the rejected move
+            error = cx.recv_msg()
+            self.assertEqual(error['type'], 'ERROR')
 
-            # Immediately send a valid move into col 1.
-            # If the server is stuck waiting on the wrong client or crashed,
-            # this recv_msg() call will time out and raise a socket.timeout.
+            # Send valid move — must produce a normal UPDATE.
             cx.move(1)
             update_x = cx.recv_msg()
             update_o = co.recv_msg()

@@ -235,6 +235,13 @@ class PremiumClient:
                 self.status_msg = "Opponent's turn…"
                 self.is_error   = False
 
+        elif msg["type"] == "ERROR":
+            # Server rejected our move (e.g. column full).
+            # Unlock _move_pending so the player can immediately click another column.
+            self._move_pending = False
+            self.status_msg    = msg.get("message", "Invalid move — try another column.")
+            self.is_error      = True
+
     def _send_move(self, col):
         # Sends a MOVE to the server if it's actually our turn and we're allowed to.
         # Guards against clicking during animations, opponent's turn, or game over.
